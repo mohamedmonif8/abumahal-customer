@@ -31,7 +31,10 @@ function App() {
     gray: '#95a5a6', success: '#27ae60', warning: '#f39c12', shadow: '0 4px 15px rgba(0,0,0,0.05 )'
   };
 
-  const getId = (item) => item._id || item.id;
+  const getId = (item) => {
+    if (!item) return Math.random();
+    return item._id || item.id || Math.random();
+  };
 
   useEffect(() => {
     if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
@@ -80,7 +83,7 @@ function App() {
         if (!res.ok) return;
         const data = await res.json();
         if (Array.isArray(data)) {
-          const userOrders = data.filter(o => o.userId === getId(user)).reverse();
+          const userOrders = data.filter(o => o && o.userId === getId(user)).reverse();
           
           userOrders.forEach(newOrder => {
             const oldOrder = prevOrdersRef.current.find(o => getId(o) === getId(newOrder));
@@ -106,7 +109,7 @@ function App() {
     };
 
     fetchMyOrders();
-    const interval = setInterval(fetchMyOrders, 1500);
+    const interval = setInterval(fetchMyOrders, 2000);
     return () => clearInterval(interval);
   }, [user, showToast]);
 
@@ -210,7 +213,7 @@ function App() {
           <div style={{ animation: 'fadeIn 0.3s' }}>
             <h3 style={{ color: theme.text, marginBottom: '20px' }}>📍 اختر الفرع الأقرب لك</h3>
             <div style={{ display: 'grid', gap: '15px' }}>
-              {branches.map(b => (
+              {(branches || []).map(b => (
                 <div key={getId(b)} onClick={() => { setSelectedBranch(b.name); setView('menu'); }} style={{ padding: '20px', backgroundColor: theme.card, border: selectedBranch === b.name ? `2px solid ${theme.primary}` : '2px solid transparent', borderRadius: '16px', cursor: 'pointer', boxShadow: theme.shadow, display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: '0.2s' }}>
                   <span style={{ fontSize: '18px', fontWeight: 'bold', color: theme.text }}>فرع {b.name}</span>
                   <span style={{ fontSize: '24px' }}>🏪</span>
@@ -227,8 +230,8 @@ function App() {
             ) : (
               <>
                 <h3 style={{ color: theme.text, marginBottom: '20px' }}>المنيو - {selectedBranch}</h3>
-                {categories.map(c => {
-                  const catProducts = products.filter(p => p.categoryId === getId(c));
+                {(categories || []).map(c => {
+                  const catProducts = (products || []).filter(p => p && p.categoryId === getId(c));
                   if (catProducts.length === 0) return null;
                   return (
                     <div key={getId(c)} style={{ marginBottom: '25px' }}>
