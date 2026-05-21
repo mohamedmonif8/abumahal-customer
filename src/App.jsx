@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 function App() {
   const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('customer_user')) || null; } catch (e) { return null; }
+    try { return JSON.parse(localStorage.getItem('customer_user')) || null; } 
+    catch (error) { console.error(error); return null; }
   });
   const [cart, setCart] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('customer_cart')) || []; } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem('customer_cart')) || []; } 
+    catch (error) { console.error(error); return []; }
   });
 
   const [phone, setPhone] = useState('');
@@ -29,8 +31,13 @@ function App() {
     gray: '#95a5a6', success: '#27ae60', warning: '#f39c12', shadow: '0 4px 15px rgba(0,0,0,0.05 )'
   };
 
-  // دالة مساعدة للحصول على المعرف الصحيح
   const getId = (item) => item._id || item.id;
+
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   useEffect(() => {
     if (user) localStorage.setItem('customer_user', JSON.stringify(user));
@@ -42,20 +49,29 @@ function App() {
 
   const showToast = useCallback((msg) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 4000);
   }, []);
 
   const playSound = () => {
-    try { new Audio('/notification.mp3').play().catch(()=>{}); } catch (e) {}
+    try { 
+      new Audio('/notification.mp3').play().catch((err) => console.error("Audio play error:", err)); 
+    } catch (error) { 
+      console.error("Audio error:", error); 
+    }
+  };
+
+  const sendPushNotification = (title, body) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body, icon: '/favicon.ico' });
+    }
   };
 
   useEffect(() => {
-    fetch(`${API_URL}/api/branches`).then(res => res.json()).then(data => { if(Array.isArray(data)) setBranches(data); }).catch(()=>{});
-    fetch(`${API_URL}/api/categories`).then(res => res.json()).then(data => { if(Array.isArray(data)) setCategories(data); }).catch(()=>{});
-    fetch(`${API_URL}/api/products`).then(res => res.json()).then(data => { if(Array.isArray(data)) setProducts(data); }).catch(()=>{});
+    fetch(`${API_URL}/api/branches`).then(res => res.json()).then(data => { if(Array.isArray(data)) setBranches(data); }).catch((err) => console.error(err));
+    fetch(`${API_URL}/api/categories`).then(res => res.json()).then(data => { if(Array.isArray(data)) setCategories(data); }).catch((err) => console.error(err));
+    fetch(`${API_URL}/api/products`).then(res => res.json()).then(data => { if(Array.isArray(data)) setProducts(data); }).catch((err) => console.error(err));
   }, []);
 
-  // التحديث الحي للطلبات
   useEffect(() => {
     if (!user) return;
     const fetchMyOrders = async () => {
@@ -69,11 +85,14 @@ function App() {
           userOrders.forEach(newOrder => {
             const oldOrder = prevOrdersRef.current.find(o => getId(o) === getId(newOrder));
             if (oldOrder && oldOrder.status !== newOrder.status) {
+              const orderNum = getId(newOrder).toString().slice(-4);
               if (newOrder.status === 'جاهز') {
-                showToast(`🎉 طلبك رقم #${getId(newOrder).toString().slice(-4)} جاهز للاستلام!`);
+                showToast(`🎉 طلبك رقم #${orderNum} جاهز للاستلام!`);
                 playSound();
+                sendPushNotification('مطعم أبو مهل 🍔', `طلبك رقم #${orderNum} جاهز للاستلام الآن!`);
               } else if (newOrder.status === 'جاري التجهيز') {
                 showToast(`👨‍🍳 بدأنا بتجهيز طلبك، انتظرنا قريباً!`);
+                sendPushNotification('مطعم أبو مهل 🍔', `بدأنا بتجهيز طلبك رقم #${orderNum} 👨‍🍳`);
               }
             }
           });
@@ -81,7 +100,9 @@ function App() {
           prevOrdersRef.current = userOrders;
           setMyOrders(userOrders);
         }
-      } catch (error) {}
+      } catch (error) {
+        console.error("Fetch orders error:", error);
+      }
     };
 
     fetchMyOrders();
@@ -98,39 +119,34 @@ function App() {
       const res = await fetch(`${API_URL}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (data.error) return showToast(data.error);
-      setUser(data); showToast(`أهلاً بك يا ${data.name} 👋`);
-    } catch (error) { showToast("خطأ في الاتصال"); }
+      setUser(data); 
+      showToast(`أهلاً بك يا ${data.name} 👋`);
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    } catch (error) { 
+      console.error(error);
+      showToast("خطأ في الاتصال"); 
+    }
   };
 
-  // 🚀 نظام السلة الجديد (إضافة / زيادة الكمية)
   const addToCart = (product) => {
     if (!product.isAvailable) return showToast("عذراً، نفدت الكمية!");
-    
     setCart(prevCart => {
       const existingItem = prevCart.find(item => getId(item) === getId(product));
       if (existingItem) {
-        return prevCart.map(item => 
-          getId(item) === getId(product) ? { ...item, quantity: item.quantity + 1 } : item
-        );
+        return prevCart.map(item => getId(item) === getId(product) ? { ...item, quantity: item.quantity + 1 } : item);
       }
       return [...prevCart, { ...product, quantity: 1 }];
     });
   };
 
-  // 🚀 نظام السلة الجديد (نقصان الكمية / حذف)
   const removeFromCart = (product) => {
     setCart(prevCart => {
       const existingItem = prevCart.find(item => getId(item) === getId(product));
-      if (existingItem.quantity === 1) {
-        return prevCart.filter(item => getId(item) !== getId(product));
-      }
-      return prevCart.map(item => 
-        getId(item) === getId(product) ? { ...item, quantity: item.quantity - 1 } : item
-      );
+      if (existingItem.quantity === 1) return prevCart.filter(item => getId(item) !== getId(product));
+      return prevCart.map(item => getId(item) === getId(product) ? { ...item, quantity: item.quantity - 1 } : item);
     });
   };
 
-  // الحصول على كمية منتج معين في السلة
   const getItemQuantity = (productId) => {
     const item = cart.find(item => getId(item) === productId);
     return item ? item.quantity : 0;
@@ -143,27 +159,17 @@ function App() {
     if (!selectedBranch) { setView('home'); return showToast("الرجاء اختيار الفرع أولاً!"); }
     if (cart.length === 0) return showToast("السلة فارغة!");
     
-    const orderData = { 
-      userId: getId(user), 
-      customerName: user.name, 
-      orderType: 'استلام من الفرع', 
-      branch: selectedBranch, 
-      totalPrice: cartTotal, 
-      items: cart, 
-      paymentStatus: 'غير مدفوع' 
-    };
+    const orderData = { userId: getId(user), customerName: user.name, orderType: 'استلام من الفرع', branch: selectedBranch, totalPrice: cartTotal, items: cart, paymentStatus: 'غير مدفوع' };
     
     try {
       const res = await fetch(`${API_URL}/api/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderData) });
       if (res.ok) {
-        setCart([]); 
-        setView('orders'); 
-        showToast("تم إرسال طلبك بنجاح! 🎉");
-        playSound();
-      } else {
-        showToast("حدث خطأ أثناء إرسال الطلب");
-      }
-    } catch (error) { showToast("فشل الاتصال بالخادم"); }
+        setCart([]); setView('orders'); showToast("تم إرسال طلبك بنجاح! 🎉"); playSound();
+      } else { showToast("حدث خطأ أثناء إرسال الطلب"); }
+    } catch (error) { 
+      console.error(error);
+      showToast("فشل الاتصال بالخادم"); 
+    }
   };
 
   if (!user) {
@@ -238,7 +244,6 @@ function App() {
                                 {!p.isAvailable && <div style={{ color: theme.primary, fontSize: '12px', marginTop: '5px' }}>نفدت الكمية</div>}
                               </div>
                               
-                              {/* 🚀 أزرار التحكم الذكية في المنيو */}
                               {p.isAvailable && (
                                 quantity > 0 ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f9f9f9', padding: '5px', borderRadius: '20px', border: '1px solid #eee' }}>
@@ -276,8 +281,6 @@ function App() {
                         <div style={{ fontWeight: 'bold', color: theme.text, fontSize: '16px' }}>{item.name}</div>
                         <div style={{ color: theme.primary, fontSize: '14px', marginTop: '5px' }}>{item.price * item.quantity} ريال</div>
                       </div>
-                      
-                      {/* 🚀 أزرار التحكم في السلة */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: '#f9f9f9', padding: '5px', borderRadius: '20px', border: '1px solid #eee' }}>
                         <button onClick={() => removeFromCart(item)} style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'white', border: '1px solid #ddd', color: theme.primary, fontSize: '20px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>-</button>
                         <span style={{ fontWeight: 'bold', fontSize: '16px', width: '20px', textAlign: 'center' }}>{item.quantity}</span>
@@ -332,7 +335,6 @@ function App() {
         )}
       </div>
 
-      {/* شريط التنقل السفلي */}
       <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: theme.card, display: 'flex', justifyContent: 'space-around', padding: '10px', boxShadow: '0 -2px 10px rgba(0,0,0,0.05)', zIndex: 100 }}>
         {[
           { id: 'home', icon: '🏪', label: 'الفروع' },
