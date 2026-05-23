@@ -1,248 +1,327 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
-/**
- * Abu Mahal Customer App - Professional Edition
- * Features: Branch Selection, Menu Browsing, Cart Management, Order Tracking
- */
+function App() {
+  const [view, setView] = useState('login'); 
+  const [user, setUser] = useState(null);
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
 
-export default function App() {
-  // ================= 1. State Management =================
-  const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('customer_user')) || null; } 
-    catch { return null; }
-  });
-
-  const [view, setView] = useState('home'); // home, menu, cart, orders, login
-  const [selectedBranch, setSelectedBranch] = useState(null);
-  const [cart, setCart] = useState([]);
+  const [orderType, setOrderType] = useState(''); 
+  const [branch, setBranch] = useState('');
+  
+  const [branches, setBranches] = useState([]); 
   const [categories, setCategories] = useState([]);
-  const [branches, setBranches] = useState([]);
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [cart, setCart] = useState([]);
   const [myOrders, setMyOrders] = useState([]);
+  
   const [toast, setToast] = useState(null);
-  const [auth, setAuth] = useState({ phone: '', password: '', name: '', isRegister: false });
 
-  const API_URL = 'https://abumahal-backend.onrender.com';
-  const theme = { primary: '#8b0000', secondary: '#f1c40f', bg: '#f8f9fa', card: '#ffffff', text: '#2c3e50' };
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
 
-  // ================= 2. Utility Functions =================
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  const colors = {
+    primary: '#8b0000', 
+    accent: '#f1c40f',  
+    bg: '#f4f7f6',
+    card: '#ffffff',
+    textDark: '#2c3e50',
+    textGray: '#7f8c8d'
+  };
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [catsRes, branchesRes] = await Promise.all([
-        fetch(`${API_URL}/api/categories`),
-        fetch(`${API_URL}/api/branches`)
-      ]);
-      if (catsRes.ok) setCategories(await catsRes.json());
-      if (branchesRes.ok) setBranches(await branchesRes.json());
+  const fetchData = () => {
+    fetch('http://localhost:3000/api/categories' )
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) { 
+          setCategories(data); 
+          if (!activeCategory && data.length > 0) setActiveCategory(data[0].id); 
+        }
+      }).catch(() => {});
       
-      if (user) {
-        const ordersRes = await fetch(`${API_URL}/api/orders/user/${user.id}`);
-        if (ordersRes.ok) setMyOrders((await ordersRes.json()).reverse());
-      }
-    } catch (error) { console.error(error); }
-  }, [user]);
+    fetch('http://localhost:3000/api/branches' )
+      .then(res => res.json())
+      .then(data => { if (Array.isArray(data)) setBranches(data); }).catch(() => {});
+
+    if (user) {
+      fetch('http://localhost:3000/api/orders' )
+        .then(res => res.json())
+        .then(data => { if (Array.isArray(data)) setMyOrders(data.filter(o => o.userId === user.id).reverse()); }).catch(() => {});
+    }
+  };
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [user, activeCategory]);
 
-  // ================= 3. Handlers =================
-  const handleAuth = async (e) => {
+  const handleAuth = (e) => {
     e.preventDefault();
-    const endpoint = auth.isRegister ? '/api/register' : '/api/login';
-    const body = auth.isRegister ? { name: auth.name, phone: auth.phone, password: auth.password } : { phone: auth.phone, password: auth.password };
-    
-    try {
-      const res = await fetch(`${API_URL}${endpoint}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
+    const url = isRegistering ? 'http://localhost:3000/api/register' : 'http://localhost:3000/api/login';
+    const body = isRegistering ? { name, phone, password, role: "عميل" } : { phone, password };
+
+    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ) })
+    .then(res => res.json())
+    .then(data => {
       if (data.error) return showToast(data.error);
       setUser(data);
-      localStorage.setItem('customer_user', JSON.stringify(data));
-      showToast(`أهلاً بك يا ${data.name}`);
-      setView('home');
-    } catch (error) { showToast("خطأ في الاتصال"); }
+      showToast(`أهلاً بك يا ${data.name} 👋`);
+      setView('orderType'); 
+    }).catch(() => showToast("خطأ في الاتصال بالخادم"));
   };
 
   const addToCart = (product) => {
-    if (!selectedBranch) return showToast("الرجاء اختيار الفرع أولاً");
+    if (!product.isAvailable) return;
     setCart([...cart, product]);
-    showToast("تمت الإضافة للسلة 🛒");
+    showToast(`تم إضافة ${product.name} للسلة 🛒`);
   };
 
-  const placeOrder = async () => {
-    if (!user) return setView('login');
-    if (cart.length === 0) return showToast("السلة فارغة");
-
-    const orderData = {
-      userId: user.id,
-      customerName: user.name,
-      orderType: 'سفري',
-      branch: selectedBranch,
-      totalPrice: cart.reduce((sum, item) => sum + item.price, 0),
-      items: cart,
-      paymentStatus: 'عند الاستلام'
-    };
-
-    try {
-      const res = await fetch(`${API_URL}/api/orders`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderData)
-      });
-      if (res.ok) {
-        showToast("تم إرسال طلبك بنجاح! 🎉");
-        setCart([]);
-        setView('orders');
-        fetchData();
-      }
-    } catch (error) { showToast("فشل إرسال الطلب"); }
+  const removeFromCart = (index) => {
+    const newCart = [...cart];
+    newCart.splice(index, 1);
+    setCart(newCart);
   };
 
-  // ================= 4. UI Components =================
-  const Navbar = () => (
-    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#fff', display: 'flex', justifyContent: 'space-around', padding: '15px', boxShadow: '0 -2px 10px rgba(0,0,0,0.1)', zIndex: 100 }}>
-      <button onClick={() => setView('home')} style={{ border: 'none', background: 'none', fontSize: '20px', color: view === 'home' ? theme.primary : '#ccc' }}>🏠</button>
-      <button onClick={() => setView('menu')} style={{ border: 'none', background: 'none', fontSize: '20px', color: view === 'menu' ? theme.primary : '#ccc' }}>🍔</button>
-      <button onClick={() => setView('cart')} style={{ border: 'none', background: 'none', fontSize: '20px', color: view === 'cart' ? theme.primary : '#ccc', position: 'relative' }}>
-        🛒 {cart.length > 0 && <span style={{ position: 'absolute', top: -5, right: -5, background: theme.primary, color: '#fff', borderRadius: '50%', width: '18px', height: '18px', fontSize: '12px' }}>{cart.length}</span>}
-      </button>
-      <button onClick={() => setView('orders')} style={{ border: 'none', background: 'none', fontSize: '20px', color: view === 'orders' ? theme.primary : '#ccc' }}>🧾</button>
-    </div>
-  );
+  const totalPrice = cart.reduce((sum, item) => sum + item.price, 0);
+
+  const checkout = () => {
+    if (cart.length === 0) return;
+    fetch('http://localhost:3000/api/orders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id, customerName: user.name, orderType, branch, totalPrice, items: cart, paymentStatus: "مدفوع" } )
+    }).then(() => {
+      setCart([]); 
+      fetchData();
+      setView('success');
+      setTimeout(() => setView('myOrders'), 3000);
+    });
+  };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: theme.bg, direction: 'rtl', fontFamily: 'sans-serif', paddingBottom: '80px' }}>
-      {toast && <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', background: '#333', color: '#fff', padding: '10px 25px', borderRadius: '25px', zIndex: 1000 }}>{toast}</div>}
-      
-      {/* Header */}
-      <div style={{ background: theme.primary, color: '#fff', padding: '20px', textAlign: 'center', borderRadius: '0 0 25px 25px' }}>
-        <h1 style={{ margin: 0, fontSize: '24px' }}>مطعم أبو محل 🍔</h1>
-        <p style={{ margin: '5px 0 0', fontSize: '14px', opacity: 0.8 }}>أطيب الوجبات تصلك أينما كنت</p>
-      </div>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap' );
+        * { font-family: 'Tajawal', sans-serif; box-sizing: border-box; }
+        body { margin: 0; background-color: #e0e5ec; }
+        .app-container { width: 100%; max-width: 480px; height: 100vh; margin: 0 auto; background-color: ${colors.bg}; position: relative; overflow: hidden; box-shadow: 0 0 30px rgba(0,0,0,0.1); display: flex; flex-direction: column; }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        .slide-up { animation: slideUp 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .glass-nav { background: rgba(255, 255, 255, 0.95); border-top: 1px solid #eee; }
+        .btn-press:active { transform: scale(0.95); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .toast { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: ${colors.textDark}; color: white; padding: 12px 25px; border-radius: 30px; font-weight: bold; z-index: 1000; box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+      `}</style>
 
-      <div style={{ padding: '20px' }}>
-        {/* Home View: Branch Selection */}
-        {view === 'home' && (
-          <div style={{ animation: 'fadeIn 0.5s' }}>
-            <h2 style={{ color: theme.text }}>اختر الفرع الأقرب إليك 📍</h2>
-            <div style={{ display: 'grid', gap: '15px', marginTop: '20px' }}>
-              {branches.map(b => (
-                <div key={b.id} onClick={() => { setSelectedBranch(b.name); setView('menu'); }} style={{ background: '#fff', padding: '20px', borderRadius: '15px', boxShadow: '0 4px 10px rgba(0,0,0,0.05)', border: selectedBranch === b.name ? `2px solid ${theme.primary}` : '2px solid transparent', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '18px', fontWeight: 'bold' }}>{b.name}</span>
-                  <span>{selectedBranch === b.name ? '✅' : '⬅️'}</span>
-                </div>
-              ))}
+      <div className="app-container" dir="rtl">
+        
+        {toast && <div className="toast fade-in">{toast}</div>}
+
+        {view !== 'login' && view !== 'success' && (
+          <div style={{ background: `linear-gradient(135deg, ${colors.primary}, #600000)`, padding: '20px', display: 'flex', alignItems: 'center', gap: '15px', borderBottomLeftRadius: '25px', borderBottomRightRadius: '25px', zIndex: 10 }}>
+            <img src="/logo.png" alt="أبو مهل" onError={(e) => e.target.style.display='none'} style={{ height: '50px', width: '50px', objectFit: 'contain', backgroundColor: 'white', borderRadius: '50%', padding: '2px' }} />
+            <div>
+              <h2 style={{ color: 'white', margin: 0, fontSize: '20px' }}>مطعم أبو مهل</h2>
+              <p style={{ color: colors.accent, margin: 0, fontSize: '13px', fontWeight: 'bold' }}>الطعم الأصيل في خميس مشيط</p>
             </div>
           </div>
         )}
 
-        {/* Menu View */}
-        {view === 'menu' && (
-          <div style={{ animation: 'fadeIn 0.5s' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0 }}>قائمة الطعام 🍽️</h2>
-              <span style={{ fontSize: '12px', background: '#eee', padding: '5px 10px', borderRadius: '10px' }}>فرع: {selectedBranch || 'لم يتم الاختيار'}</span>
+        <div className="hide-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '20px', paddingBottom: '100px' }}>
+          
+          {view === 'login' && (
+            <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100%', padding: '20px' }}>
+              <img src="/logo.png" alt="شعار" onError={(e) => e.target.style.display='none'} style={{ width: '140px', height: '140px', objectFit: 'contain', marginBottom: '20px' }} />
+              <h1 style={{ color: colors.primary, margin: '0 0 5px 0' }}>أبو مهل</h1>
+              <p style={{ color: colors.textGray, marginBottom: '30px' }}>سجل دخولك واستمتع بألذ الوجبات</p>
+              
+              <form onSubmit={handleAuth} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {isRegistering && <input type="text" placeholder="الاسم الكريم" value={name} onChange={e => setName(e.target.value)} required style={{ padding: '18px', borderRadius: '15px', border: '1px solid #ddd', outline: 'none', fontSize: '16px' }} />}
+                <input type="tel" placeholder="رقم الجوال" value={phone} onChange={e => setPhone(e.target.value)} required style={{ padding: '18px', borderRadius: '15px', border: '1px solid #ddd', outline: 'none', fontSize: '16px' }} />
+                <input type="password" placeholder="الرقم السري" value={password} onChange={e => setPassword(e.target.value)} required style={{ padding: '18px', borderRadius: '15px', border: '1px solid #ddd', outline: 'none', fontSize: '16px' }} />
+                <button className="btn-press" type="submit" style={{ padding: '18px', background: `linear-gradient(135deg, ${colors.primary}, #600000)`, color: 'white', border: 'none', borderRadius: '15px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
+                  {isRegistering ? 'إنشاء حساب' : 'تسجيل الدخول'}
+                </button>
+              </form>
+              <p onClick={() => setIsRegistering(!isRegistering)} style={{ color: colors.textDark, cursor: 'pointer', marginTop: '30px', fontWeight: 'bold' }}>
+                {isRegistering ? 'لدي حساب بالفعل؟ دخول' : 'مستخدم جديد؟ سجل الآن'}
+              </p>
             </div>
-            {categories.map(c => (
-              <div key={c.id} style={{ marginBottom: '25px' }}>
-                <h3 style={{ color: theme.primary, borderBottom: `2px solid ${theme.primary}`, paddingBottom: '5px', marginBottom: '15px' }}>{c.name}</h3>
-                <div style={{ display: 'grid', gap: '15px' }}>
-                  {c.products.filter(p => p.isAvailable).map(p => (
-                    <div key={p.id} style={{ background: '#fff', padding: '15px', borderRadius: '15px', display: 'flex', gap: '15px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-                      <div style={{ width: '80px', height: '80px', background: '#f0f0f0', borderRadius: '10px', overflow: 'hidden' }}>
-                        {p.imageUrl ? <img src={p.imageUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ textAlign: 'center', lineHeight: '80px', fontSize: '30px' }}>🍔</div>}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <h4 style={{ margin: '0 0 5px 0' }}>{p.name}</h4>
-                        <p style={{ margin: 0, color: theme.primary, fontWeight: 'bold' }}>{p.price} ريال</p>
-                        <button onClick={() => addToCart(p)} style={{ marginTop: '10px', width: '100%', padding: '8px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px' }}>إضافة للسلة +</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+          )}
 
-        {/* Cart View */}
-        {view === 'cart' && (
-          <div style={{ animation: 'fadeIn 0.5s' }}>
-            <h2>سلة المشتريات 🛒</h2>
-            {cart.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '50px' }}>
-                <p style={{ fontSize: '50px' }}>🛒</p>
-                <p>سلتك فارغة حالياً</p>
-                <button onClick={() => setView('menu')} style={{ padding: '10px 20px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '10px' }}>اطلب الآن</button>
+          {view === 'orderType' && (
+            <div className="slide-up">
+              <h2 style={{ color: colors.textDark, marginBottom: '5px' }}>مرحباً {user?.name} 👋</h2>
+              <p style={{ color: colors.textGray, marginTop: 0, marginBottom: '25px' }}>حدد طريقة استلام طلبك</p>
+              
+              <div style={{ display: 'flex', gap: '15px' }}>
+                <button disabled style={{ flex: 1, padding: '25px 10px', backgroundColor: '#e0e0e0', color: '#95a5a6', border: 'none', borderRadius: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', opacity: 0.7 }}>
+                  <span style={{ fontSize: '35px', filter: 'grayscale(100%)' }}>🛵</span>
+                  <span style={{ fontWeight: 'bold', fontSize: '16px' }}>توصيل</span>
+                  <span style={{ fontSize: '12px', backgroundColor: '#bdc3c7', color: 'white', padding: '4px 10px', borderRadius: '12px' }}>قريباً ⏳</span>
+                </button>
+
+                <button className="btn-press" onClick={() => setOrderType('استلام من الفرع')} style={{ flex: 1, padding: '25px 10px', backgroundColor: orderType === 'استلام من الفرع' ? colors.primary : 'white', color: orderType === 'استلام من الفرع' ? 'white' : colors.textDark, border: orderType === 'استلام من الفرع' ? 'none' : '2px solid transparent', borderRadius: '20px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', boxShadow: '0 5px 15px rgba(0,0,0,0.05)' }}>
+                  <span style={{ fontSize: '35px' }}>🏪</span>
+                  <span style={{ fontWeight: 'bold', fontSize: '16px' }}>استلام من الفرع</span>
+                  <span style={{ fontSize: '12px', color: orderType === 'استلام من الفرع' ? colors.accent : colors.primary, fontWeight: 'bold' }}>متاح الآن ✅</span>
+                </button>
               </div>
-            ) : (
-              <>
-                <div style={{ background: '#fff', borderRadius: '15px', padding: '15px', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
-                  {cart.map((item, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: i === cart.length - 1 ? 'none' : '1px solid #eee' }}>
-                      <span>{item.name}</span>
-                      <span style={{ fontWeight: 'bold' }}>{item.price} ريال</span>
-                    </div>
-                  ))}
-                  <div style={{ marginTop: '20px', borderTop: '2px dashed #eee', paddingTop: '15px', display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 'bold' }}>
-                    <span>الإجمالي:</span>
-                    <span style={{ color: theme.primary }}>{cart.reduce((sum, item) => sum + item.price, 0)} ريال</span>
+
+              {orderType === 'استلام من الفرع' && (
+                <div className="slide-up" style={{ marginTop: '35px' }}>
+                  <h3 style={{ color: colors.textDark, marginBottom: '15px' }}>اختر الفرع الأقرب لك:</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {branches.map(b => (
+                      <button key={b.id} className="btn-press" onClick={() => setBranch(b.name)} style={{ padding: '20px', backgroundColor: branch === b.name ? colors.primary : 'white', color: branch === b.name ? 'white' : colors.textDark, border: 'none', borderRadius: '15px', textAlign: 'right', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+                        <span>📍 فرع {b.name}</span>
+                        {branch === b.name && <span style={{ color: colors.accent }}>✔</span>}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <button onClick={placeOrder} style={{ width: '100%', marginTop: '20px', padding: '15px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '15px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' }}>تأكيد الطلب ✅</button>
-              </>
-            )}
-          </div>
-        )}
+              )}
 
-        {/* Orders View */}
-        {view === 'orders' && (
-          <div style={{ animation: 'fadeIn 0.5s' }}>
-            <h2>طلباتي السابقة 🧾</h2>
-            {!user ? (
-              <div style={{ textAlign: 'center', padding: '50px' }}>
-                <p>يرجى تسجيل الدخول لمشاهدة طلباتك</p>
-                <button onClick={() => setView('login')} style={{ padding: '10px 20px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '10px' }}>تسجيل الدخول</button>
+              {orderType && branch && (
+                <button className="btn-press slide-up" onClick={() => setView('menu')} style={{ width: '100%', padding: '20px', background: colors.textDark, color: 'white', border: 'none', borderRadius: '15px', marginTop: '30px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  تصفح المنيو 🍔
+                </button>
+              )}
+            </div>
+          )}
+
+          {view === 'menu' && (
+            <div className="fade-in">
+              <div className="hide-scrollbar" style={{ display: 'flex', overflowX: 'auto', gap: '12px', paddingBottom: '10px', marginBottom: '25px' }}>
+                {categories.map(c => (
+                  <button key={c.id} className="btn-press" onClick={() => setActiveCategory(c.id)} style={{ padding: '12px 25px', whiteSpace: 'nowrap', backgroundColor: activeCategory === c.id ? colors.primary : 'white', color: activeCategory === c.id ? 'white' : colors.textDark, border: 'none', borderRadius: '25px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+                    {c.name}
+                  </button>
+                ))}
               </div>
-            ) : (
-              <div style={{ display: 'grid', gap: '15px' }}>
-                {myOrders.map(o => (
-                  <div key={o.id} style={{ background: '#fff', padding: '20px', borderRadius: '15px', boxShadow: '0 4px 10px rgba(0,0,0,0.05)', borderRight: `5px solid ${o.status === 'جاهز' ? '#27ae60' : theme.secondary}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <span style={{ fontWeight: 'bold' }}>طلب #{o.id}</span>
-                      <span style={{ color: theme.primary, fontWeight: 'bold' }}>{o.totalPrice} ريال</span>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {categories.find(c => c.id === activeCategory)?.products?.map(p => (
+                  <div key={p.id} className="slide-up" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '18px', borderRadius: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', opacity: p.isAvailable ? 1 : 0.5 }}>
+                    <div>
+                      <h3 style={{ margin: '0 0 8px 0', color: colors.textDark, fontSize: '18px', textDecoration: p.isAvailable ? 'none' : 'line-through' }}>{p.name}</h3>
+                      <span style={{ color: p.isAvailable ? colors.primary : '#e74c3c', fontWeight: '900', fontSize: '16px' }}>
+                        {p.isAvailable ? `${p.price} ريال` : 'نفدت الكمية ❌'}
+                      </span>
                     </div>
-                    <div style={{ fontSize: '14px', color: '#666' }}>الحالة: <span style={{ color: theme.primary, fontWeight: 'bold' }}>{o.status}</span></div>
-                    <div style={{ fontSize: '12px', color: '#999', marginTop: '5px' }}>الفرع: {o.branch}</div>
+                    
+                    {p.isAvailable && (
+                      <button className="btn-press" onClick={() => addToCart(p)} style={{ backgroundColor: '#fef0f0', color: colors.primary, border: 'none', width: '45px', height: '45px', borderRadius: '15px', fontSize: '24px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer' }}>
+                        +
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
-        {/* Login/Register View */}
-        {view === 'login' && (
-          <div style={{ animation: 'fadeIn 0.5s', background: '#fff', padding: '30px', borderRadius: '20px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
-            <h2 style={{ textAlign: 'center', color: theme.primary }}>{auth.isRegister ? 'إنشاء حساب جديد' : 'تسجيل الدخول'}</h2>
-            <form onSubmit={handleAuth} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
-              {auth.isRegister && <input placeholder="الاسم الكامل" value={auth.name} onChange={e => setAuth({...auth, name: e.target.value})} required style={{ padding: '15px', borderRadius: '10px', border: '1px solid #ddd' }} />}
-              <input type="tel" placeholder="رقم الجوال" value={auth.phone} onChange={e => setAuth({...auth, phone: e.target.value})} required style={{ padding: '15px', borderRadius: '10px', border: '1px solid #ddd' }} />
-              <input type="password" placeholder="كلمة المرور" value={auth.password} onChange={e => setAuth({...auth, password: e.target.value})} required style={{ padding: '15px', borderRadius: '10px', border: '1px solid #ddd' }} />
-              <button type="submit" style={{ padding: '15px', background: theme.primary, color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer' }}>{auth.isRegister ? 'تسجيل' : 'دخول'}</button>
-              <p onClick={() => setAuth({...auth, isRegister: !auth.isRegister})} style={{ textAlign: 'center', fontSize: '14px', color: theme.primary, cursor: 'pointer' }}>{auth.isRegister ? 'لديك حساب؟ سجل دخولك' : 'ليس لديك حساب؟ سجل الآن'}</p>
-            </form>
+          {view === 'cart' && (
+            <div className="fade-in">
+              <h2 style={{ color: colors.textDark, marginBottom: '20px' }}>سلة الطلبات 🛒</h2>
+              {cart.length === 0 ? (
+                <div style={{ textAlign: 'center', marginTop: '60px', color: colors.textGray }}>
+                  <div style={{ fontSize: '70px', marginBottom: '15px', opacity: 0.5 }}>🛒</div>
+                  <h3>سلتك فارغة حالياً!</h3>
+                  <button className="btn-press" onClick={() => setView('menu')} style={{ marginTop: '20px', padding: '12px 30px', backgroundColor: colors.primary, color: 'white', border: 'none', borderRadius: '20px', fontWeight: 'bold' }}>الذهاب للمنيو</button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {cart.map((item, i) => (
+                      <div key={i} className="slide-up" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px', backgroundColor: 'white', borderRadius: '15px', boxShadow: '0 2px 5px rgba(0,0,0,0.03)' }}>
+                        <span style={{ fontWeight: 'bold', color: colors.textDark, fontSize: '16px' }}>{item.name}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                          <strong style={{ color: colors.primary }}>{item.price} ريال</strong>
+                          <button className="btn-press" onClick={() => removeFromCart(i)} style={{ background: '#ffeeee', border: 'none', color: '#e74c3c', width: '35px', height: '35px', borderRadius: '10px', fontSize: '16px', cursor: 'pointer' }}>🗑️</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="slide-up" style={{ marginTop: '30px', padding: '25px', backgroundColor: 'white', borderRadius: '20px', boxShadow: '0 5px 15px rgba(0,0,0,0.05)' }}>
+                    <h3 style={{ display: 'flex', justifyContent: 'space-between', margin: '0 0 25px 0', color: colors.textDark }}>
+                      <span>الإجمالي:</span> 
+                      <span style={{ color: colors.primary, fontSize: '26px', fontWeight: '900' }}>{totalPrice} ريال</span>
+                    </h3>
+                    <button className="btn-press" onClick={checkout} style={{ width: '100%', padding: '20px', background: `linear-gradient(135deg, ${colors.primary}, #600000)`, color: 'white', border: 'none', borderRadius: '15px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' }}>
+                      تأكيد وإرسال الطلب ✅
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {view === 'success' && (
+            <div className="fade-in" style={{ textAlign: 'center', marginTop: '120px' }}>
+              <div style={{ fontSize: '90px', marginBottom: '20px' }}>🎉</div>
+              <h2 style={{ color: '#27ae60', fontSize: '28px', margin: '0 0 10px 0' }}>تم استلام طلبك!</h2>
+              <p style={{ color: colors.textGray, fontSize: '16px' }}>جاري تجهيز أشهى الوجبات لك...</p>
+            </div>
+          )}
+
+          {view === 'myOrders' && (
+            <div className="fade-in">
+              <h2 style={{ color: colors.textDark, marginBottom: '20px' }}>طلباتي السابقة 🧾</h2>
+              {myOrders.length === 0 ? (
+                <p style={{ textAlign: 'center', color: colors.textGray, marginTop: '60px' }}>لم تقم بأي طلب حتى الآن.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  {myOrders.map(o => (
+                    <div key={o.id} className="slide-up" style={{ backgroundColor: 'white', padding: '20px', borderRadius: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', borderRight: `6px solid ${o.status === 'جاهز' ? '#27ae60' : o.status === 'جاري التجهيز' ? '#f39c12' : colors.primary}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
+                        <strong style={{ color: colors.textDark, fontSize: '18px' }}>طلب #{o.id}</strong>
+                        <span style={{ color: colors.primary, fontWeight: '900', fontSize: '18px' }}>{o.totalPrice} ريال</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: colors.textGray, fontSize: '14px' }}>📍 {o.branch}</span>
+                        <span style={{ backgroundColor: o.status === 'جاهز' ? '#e8f8f5' : o.status === 'جاري التجهيز' ? '#fef5e7' : '#fdedec', color: o.status === 'جاهز' ? '#27ae60' : o.status === 'جاري التجهيز' ? '#f39c12' : colors.primary, padding: '6px 15px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold' }}>
+                          {o.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {user && view !== 'success' && (
+          <div className="glass-nav slide-up" style={{ position: 'absolute', bottom: '0', left: '0', width: '100%', display: 'flex', padding: '15px 5px', boxShadow: '0 -5px 20px rgba(0,0,0,0.05)', zIndex: 100 }}>
+            <button className="btn-press" onClick={() => setView('orderType')} style={{ flex: 1, border: 'none', background: 'none', color: view === 'orderType' ? colors.primary : colors.textGray, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+              <span style={{ fontSize: '22px' }}>🏠</span>
+              <span style={{ fontSize: '12px', fontWeight: view === 'orderType' ? 'bold' : 'normal' }}>الرئيسية</span>
+            </button>
+            <button className="btn-press" onClick={() => setView('menu')} style={{ flex: 1, border: 'none', background: 'none', color: view === 'menu' ? colors.primary : colors.textGray, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+              <span style={{ fontSize: '22px' }}>🍔</span>
+              <span style={{ fontSize: '12px', fontWeight: view === 'menu' ? 'bold' : 'normal' }}>المنيو</span>
+            </button>
+            <button className="btn-press" onClick={() => setView('cart')} style={{ flex: 1, border: 'none', background: 'none', color: view === 'cart' ? colors.primary : colors.textGray, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', position: 'relative' }}>
+              <span style={{ fontSize: '22px' }}>🛒</span>
+              <span style={{ fontSize: '12px', fontWeight: view === 'cart' ? 'bold' : 'normal' }}>السلة</span>
+              {cart.length > 0 && <span style={{ position: 'absolute', top: '-5px', right: '20px', backgroundColor: colors.primary, color: 'white', borderRadius: '50%', width: '20px', height: '20px', fontSize: '12px', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold' }}>{cart.length}</span>}
+            </button>
+            <button className="btn-press" onClick={() => setView('myOrders')} style={{ flex: 1, border: 'none', background: 'none', color: view === 'myOrders' ? colors.primary : colors.textGray, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+              <span style={{ fontSize: '22px' }}>🧾</span>
+              <span style={{ fontSize: '12px', fontWeight: view === 'myOrders' ? 'bold' : 'normal' }}>طلباتي</span>
+            </button>
           </div>
         )}
       </div>
-
-      <Navbar />
-      <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-    </div>
+    </>
   );
 }
+
+export default App;
